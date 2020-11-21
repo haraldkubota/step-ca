@@ -1,0 +1,30 @@
+---
+step_version: "0.15.3"
+stepca_version: "0.15.5"
+
+# arch choices: armv7, arm64, amd64
+arch: "amd64"
+
+# Info for your CA
+
+ca_name: "myCA"
+ca_dns: "ca.lan"
+ca_address: ":8443"
+ca_provisioner: "myCA@home"
+key_password_file: "key_pass.txt"
+provisioner_password_file: "provisioner_pass.txt"
+
+# General variables
+
+usr_local: "/usr/local"
+tmp: "/tmp"
+dot_step: "{{ lookup('env', 'HOME') }}/.step"
+ca_json: "{{ dot_step }}/config/ca.json"
+pass_target_location: "{{ dot_step }}/pass"
+
+# Download related
+
+smallstep_url: "https://github.com/smallstep/"
+step_file: "step_linux_{{ step_version }}_{{ arch }}.tar.gz"
+stepca_file: "step-certificates_linux_{{ stepca_version }}_{{ arch }}.tar.gz"
+

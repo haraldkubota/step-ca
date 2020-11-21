@@ -1,0 +1,167 @@
+---
+- hosts: 127.0.0.1
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  vars_files:
+  - vars/main.yaml
+  tasks:
+  - name: Download step binaries for {{ arch }}
+    get_url:
+      url: "{{ item.url }}"
+      dest: "{{ tmp }}/{{ item.dest }}"
+    with_items:
+    - { url: "{{ smallstep_url }}/cli/releases/download/v{{ step_version }}/{{ step_file }}", dest: "{{ step_file }}" }
+    - { url: "{{ smallstep_url }}/certificates/releases/download/v{{ stepca_version }}/{{ stepca_file }}", dest: "{{ stepca_file }}" }
+
+  - name: Extract archives
+    unarchive:
+      src: "{{ tmp }}/{{ item }}"
+      dest: "{{ tmp }}/"
+    with_items:
+    - "{{ step_file }}"
+    - "{{ stepca_file }}"
+
+  - name: Make sure {{ usr_local }}/bin exists
+    file:
+      path: "{{ usr_local }}"
+      state: directory
+
+  - name: Copy binaries to {{ usr_local }}/bin/
+    copy:
+      src: "{{ item }}"
+      dest: "{{ usr_local }}/bin/"
+      mode: '0755'
+    with_items:
+    - "{{ tmp }}/step_{{ step_version }}/bin/step"
+    - "{{ tmp }}/step-certificates_{{ stepca_version }}/bin/step-ca"
+    - "{{ tmp }}/step-certificates_{{ stepca_version }}/bin/step-awskms-init"
+    - "{{ tmp }}/step-certificates_{{ stepca_version }}/bin/step-cloudkms-init"
+    become: yes
+
+  - name: Install list of required packages
+    package: name={{ item }} state=present
+    become: yes
+    with_items:
+    - build-essential
+    - git
+    - tmux
+    - jq
+
+  - name: Check for {{ dot_step }}
+    stat:
+      path: "{{ dot_step }}"
+    register: dot_step_result
+
+  - name: Move {{ dot_step }} if it already exists
+    debug:
+      msg: "Aborting as {{ dot_step }} already exists. Please move/delete first as otherwise 'step ca init' will hang."
+    failed_when: dot_step_result.stat.exists
+
+  - name: step ca init
+    command:
+      cmd: step ca init --name {{ ca_name }} --dns {{ ca_dns }} --address {{ ca_address }} --provisioner "{{ ca_provisioner }}"  --password-file "./files/{{ key_password_file }}" --provisioner-password-file "./files/{{ provisioner_password_file }}"
+      creates: "{{ ca_json }}"
+    register: stepca_output
+
+  - name: Display step ca init output
+    debug:
+      msg: "{{ item }}"
+      verbosity: 2
+    with_items:
+    - "{{ stepca_output.stdout_lines }}"
+    - "{{ stepca_output.stderr_lines }}"
+    when: stepca_output.stdout_lines is defined and stepca_output.stderr_lines is defined
+
+# 32 bit, e.g. ARMv7, needs BadgerV2
+  - name: Use BadgerV2 instead of Badger
+    lineinfile:
+      path: "{{ ca_json }}"
+      regexp: '^(\s+)"type":\s+"badger",'
+      line: '\1"type": "badgerv2",'
+      backrefs: yes
+
+# Only add below block once
+  - name: Check if default durations already set
+    command: jq -e '.authority.provisioners[] | .claims' "{{ ca_json }}"
+    ignore_errors: yes
+    check_mode: no
+    changed_when: no
+    register: hasClaimsAlready
+
+  - name: Debug2
+    debug:
+      var: hasClaimsAlready.rc
+      verbosity: 1
+
+  - name: Set Default JWK parameters, like default life time of a certificate
+    blockinfile:
+      path: "{{ ca_json }}"
+      insertafter: '"type":\s"JWK",'
+      marker: ""
+      block: |1
+        "claims": {
+            "minTLSCertDuration": "5m",
+            "maxTLSCertDuration": "720h",
+            "defaultTLSCertDuration": "168h",
+            "disableRenewal": false,
+            "minHostSSHCertDuration": "5m",
+            "maxHostSSHCertDuration": "1680h",
+            "minUserSSHCertDuration": "5m",
+            "maxUserSSHCertDuration": "24h",
+            "enableSSHCA": true
+        },
+    when: hasClaimsAlready.rc != 0    
+
+  - name: Create ~/.step/pass/
+    file:
+      path: "{{ pass_target_location }}"
+      state: directory
+      mode: '0700'
+
+  - name: Copy passphrase files to .step/
+    copy:
+      src: "{{ item }}"
+      dest: "{{ pass_target_location }}/"
+      mode: '0700'
+    with_items:
+    - "./files/{{ key_password_file }}"
+    - "./files/{{ provisioner_password_file }}"
+
+  - name: Debian or RedHat
+    shell: if [[ -d /etc/sysconfig ]] ; then echo "sysconfig" ; else echo "default" ; fi
+    register: etc_config
+    changed_when: false
+
+  - set_fact:
+      etc_config={{ etc_config.stdout }}
+
+  - name: Copy /etc/sysconfig/step-ca
+    template:
+      src: step-ca.j2
+      dest: /etc/{{ etc_config }}/step-ca
+    become: yes
+
+  - name: Copy systemd unit
+    template:
+      src: step-ca.service.j2
+      dest: /etc/systemd/system/step-ca.service
+    become: yes
+    notify: Start step CA
+
+  - name: Get root cert fingerprint
+    shell: step certificate fingerprint $(step path)/certs/root_ca.crt
+    register: fingerprint
+    changed_when: false
+
+  - name: Print fingerprint
+    debug:
+      var: fingerprint.stdout
+
+  handlers:
+    - name: Start step CA
+      systemd:
+        daemon_reload: yes
+        name: step-ca
+        enabled: yes
+        state: started
+      become: yes

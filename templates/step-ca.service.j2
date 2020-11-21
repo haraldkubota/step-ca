@@ -1,0 +1,16 @@
+[Unit]
+Description=Step Certificates
+Wants=basic.target
+After=basic.target network.target
+
+[Service]
+WorkingDirectory={{ lookup('env', 'HOME') }}
+EnvironmentFile=/etc/{{ etc_config }}/step-ca
+ExecStart={{ usr_local }}/bin/step-ca {{ dot_step }}/config/ca.json $STEP_CA_OPTIONS
+User={{ lookup('env', 'USER') }}
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
+
