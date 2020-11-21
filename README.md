@@ -1,31 +1,34 @@
 # Simple step CA setup
 
-I plan to run step CA on a very small ARM PC. Very small power consumption, no noise. While I could use a containers for this, it does not add much value as that PC is on the lower end side.
+I plan to run step CA on a very small ARM PC. Very small power consumption, no noise.
+While I could and would usually use a containers for this, it does not add much value as that PC is on the lower end side.
+So Ansible it is.
 
 ## Prerequisites
 
 * Linux installed (Debian 10)
-* A non-root account to log in with a home directory and that user can become root via sudo without being asked for a password
-* ansible installed: "apt install ansible" should do it
+* A non-root account to log in with a home directory
+* That user can become root via sudo without being asked for a password
+* Ansible locally installed: "apt install ansible" should do it
 
 ## Configuration
 
-* ./files/key-pass.txt contains the passphrase for protecting the root and intermediary CA key. The latter is used by step-ca.
-* ./files/provisioner-pass.txt contains the passphrase the step clients needs to use to request a certificate via JWK (default)
-* ./vars/main.yaml contains variables used by the Ansible script. Mainly change the version and maybe the architecture
+* ./files/key-pass.txt contains the passphrase for protecting the root and intermediary CA key.
+* ./files/provisioner-pass.txt contains the passphrase the step clients needs to use to request a certificate via JWK (default).
+* ./vars/main.yaml contains variables used by the Ansible script. Mainly change the version and maybe the architecture.
 
 ## Installation
-This sets up everything.
+
+As easy as:
 ```
 $ ansible-playbook -i inventory playbook.yaml
 ```
 
-You now have:
+When successfully finished, you now have:
 * ~/.step the CA files for step-ca
-* a systemd service step-ca which runs and will re-run upon reboot
-* a config file for above service in /etc/(default|sysconfig)/step-ca
+* a systemd service step-ca which runs and will re-run upon reboot (config file in /etc/(default|sysconfig)/step-ca)
 
-In my example, my step CA is now reachable on https://ca.lan:8443
+In my example, my new step CA is already reachable on https://ca.lan:8443 (see ./vars/main.yaml for where those values come from).
 
 ## Connecting from a step client
 
@@ -35,7 +38,7 @@ On a client machine, do:
 The root certificate has been saved in /home/harald/.step/certs/root_ca.crt.
 Your configuration has been saved in /home/harald/.step/config/defaults.json.
 ```
-If you forgot your root CA fingerprint, do on the CA server:
+Although the fingerprint is displayed as part of the Ansible Playbook run, if you forgot your root CA fingerprint, do on the CA server:
 ```
 ❯ step certificate fingerprint $(step path)/certs/root_ca.crt
 ```
@@ -71,6 +74,7 @@ Certificate:
 
 ## What next to do
 
+### Install the root certificate on client machines
 Get the root certificate and install in your OS and browser's default certificate store:
 ```
 ❯ step ca root myCAroot.crt
@@ -115,4 +119,24 @@ how to fix it, please visit the web page mentioned above.
 ❯ curl https://ca.lan:8443/health
 {"status":"ok"}
 ```
+
+### Import the root certificate in browsers
+
+Depends on the browser how this is done, but it's generally under Security/Certificates. It uses the very same root certificate you downloaded in the previous step.
+
+### Protect the root key
+
+The root key in ~/.step/keys/root_ca.key is not needed unless you sign a new intermediate certificate. So it's not needed most of the time. It's also by default using the same passphrase as the intermediate CA key, so change:
+```
+❯ cd $(step path)/secrets
+❯ mv root_ca_key root_ca_key.old && openssl ec -in root_ca_key.old | openssl ec -out root_ca_key -aes256
+read EC key
+read EC key
+Enter PEM pass phrase:
+writing EC key
+writing EC key
+Enter PEM pass phrase:
+Verifying - Enter PEM pass phrase:
+```
+and now store the root_ca_key with its new passphrase somewhere secure (offline).
 
